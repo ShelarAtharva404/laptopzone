@@ -1,0 +1,163 @@
+# ═══════════════════════════════════════════════════════════════
+# Prometheus Alerting Rules - LaptopZone
+# ═══════════════════════════════════════════════════════════════
+
+groups:
+  # ─── API Health Alerts ─────────────────────────────────────
+  - name: api_alerts
+    interval: 30s
+    rules:
+      - alert: APIDown
+        expr: up{job="laptopzone-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "🚨 LaptopZone API is DOWN"
+          description: "Backend API has been down for more than 1 minute. Instance: {{ $labels.instance }}"
+          runbook: "https://wiki.laptopzone.com/runbooks/api-down"
+
+      - alert: HighErrorRate
+        expr: |
+          rate(http_requests_total{status=~"5.."}[5m]) /
+          rate(http_requests_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "⚠️ High API Error Rate"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%). Route: {{ $labels.route }}"
+
+      - alert: CriticalErrorRate
+        expr: |
+          rate(http_requests_total{status=~"5.."}[5m]) /
+          rate(http_requests_total[5m]) > 0.15
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "🚨 Critical API Error Rate"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 15%)"
+
+      - alert: SlowAPIResponse
+        expr: |
+          histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "⚠️ Slow API Response Times"
+          description: "95th percentile response time is {{ $value }}s (threshold: 2s)"
+
+      - alert: HighAPILatency
+        expr: |
+          histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m])) > 5
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "🚨 Very High API Latency (P99 > 5s)"
+          description: "99th percentile response time is {{ $value }}s"
+
+  # ─── System Resource Alerts ────────────────────────────────
+  - name: system_alerts
+    rules:
+      - alert: HighCPUUsage
+        expr: |
+          100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "⚠️ High CPU Usage"
+          description: "CPU usage is {{ $value }}% on {{ $labels.instance }}"
+
+      - alert: CriticalCPUUsage
+        expr: |
+          100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 95
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "🚨 Critical CPU Usage (>95%)"
+          description: "CPU usage is {{ $value }}% on {{ $labels.instance }}"
+
+      - alert: HighMemoryUsage
+        expr: |
+          (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) /
+          node_memory_MemTotal_bytes * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "⚠️ High Memory Usage"
+          description: "Memory usage is {{ $value }}% on {{ $labels.instance }}"
+
+      - alert: LowDiskSpace
+        expr: |
+          (node_filesystem_size_bytes{fstype!="tmpfs"} - node_filesystem_free_bytes{fstype!="tmpfs"}) /
+          node_filesystem_size_bytes{fstype!="tmpfs"} * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "⚠️ Low Disk Space"
+          description: "Disk usage is {{ $value }}% on {{ $labels.instance }} mount {{ $labels.mountpoint }}"
+
+      - alert: CriticalDiskSpace
+        expr: |
+          (node_filesystem_size_bytes{fstype!="tmpfs"} - node_filesystem_free_bytes{fstype!="tmpfs"}) /
+          node_filesystem_size_bytes{fstype!="tmpfs"} * 100 > 95
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "🚨 Critical Disk Space (>95% used)"
+          description: "Disk usage is {{ $value }}% on {{ $labels.mountpoint }}"
+
+  # ─── Database Alerts ───────────────────────────────────────
+  - name: database_alerts
+    rules:
+      - alert: MongoDBDown
+        expr: up{job="mongodb"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "🚨 MongoDB is DOWN"
+          description: "MongoDB exporter is not reachable. Database may be down."
+
+      - alert: MongoDBHighConnections
+        expr: mongodb_ss_connections{conn_type="current"} > 500
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "⚠️ MongoDB High Connection Count"
+          description: "MongoDB has {{ $value }} active connections (threshold: 500)"
+
+  # ─── Website Availability ─────────────────────────────────
+  - name: website_alerts
+    rules:
+      - alert: WebsiteDown
+        expr: probe_success{job="blackbox-http"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "🚨 Website is DOWN"
+          description: "{{ $labels.instance }} is unreachable"
+
+      - alert: SSLCertExpiringSoon
+        expr: probe_ssl_earliest_cert_expiry - time() < 86400 * 14
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "⚠️ SSL Certificate Expiring Soon"
+          description: "SSL cert for {{ $labels.instance }} expires in {{ $value | humanizeDuration }}"
