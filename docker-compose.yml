@@ -14,6 +14,9 @@ services:
       - "5000:5000"
     environment:
       - NODE_ENV=production
+      - MONGODB_URI=mongodb://host.docker.internal:27017/laptopstore
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - laptopzone-network
     healthcheck:
@@ -147,7 +150,9 @@ services:
     ports:
       - "9216:9216"
     environment:
-      - MONGODB_URI=${MONGODB_URI}
+      - MONGODB_URI=mongodb://host.docker.internal:27017/laptopstore
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - laptopzone-network
 
