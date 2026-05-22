@@ -81,6 +81,22 @@ services:
     networks:
       - laptopzone-network
 
+  # ─── Alertmanager ────────────────────────────────────────────
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: laptopzone-alertmanager
+    restart: unless-stopped
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/data
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/data'
+    networks:
+      - laptopzone-network
+
   # ─── Grafana ─────────────────────────────────────────────────
   grafana:
     image: grafana/grafana:10.1.0
@@ -139,6 +155,8 @@ volumes:
   prometheus_data:
     driver: local
   grafana_data:
+    driver: local
+  alertmanager_data:
     driver: local
 
 networks:
