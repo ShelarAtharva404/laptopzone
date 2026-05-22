@@ -1,6 +1,6 @@
 # 🖥️ LaptopZone — Full Stack E-Commerce Platform
 
-> India's #1 Laptop Store | Built with React + Node.js + MongoDB Atlas | DevOps with GitLab CI/CD + AWS + Prometheus + Grafana
+> India's #1 Laptop Store | Built with React + Node.js + MongoDB Atlas | DevOps with GitHub Actions + Kubernetes + AWS + Prometheus + Grafana
 
 ---
 
@@ -12,7 +12,8 @@
 - [Local Development Setup](#local-setup)
 - [Environment Variables](#environment-variables)
 - [Docker Setup](#docker)
-- [GitLab CI/CD Pipeline](#cicd)
+- [GitHub Actions CI/CD Pipeline](#cicd)
+- [Kubernetes (Kustomize) Orchestration](#kubernetes)
 - [AWS Deployment](#aws)
 - [Monitoring: Prometheus + Grafana](#monitoring)
 - [Admin Panel](#admin-panel)
@@ -42,7 +43,7 @@
                              │  (Mumbai)       │
                              └─────────────────┘
 
-GitLab CI/CD ──► Build & Test ──► Push to ECR ──► Deploy to ECS
+GitHub Actions ──► Build & Test ──► Push to GHCR ──► SSH Deploy / AWS ECS
 
 Prometheus ──► Scrape metrics ──► Grafana Dashboards + Alerts
 ```
@@ -80,7 +81,8 @@ Prometheus ──► Scrape metrics ──► Grafana Dashboards + Alerts
 | Technology | Purpose |
 |-----------|---------|
 | Docker + Docker Compose | Containerization |
-| GitLab CI/CD | 7-stage automated pipeline |
+| GitHub Actions | 8-job enterprise-grade pipeline |
+| Kubernetes (Kustomize) | Declarative Staging & Production orchestration |
 | AWS ECS Fargate | Container orchestration |
 | AWS ALB | Load balancing |
 | AWS CloudFront | CDN & global delivery |
@@ -97,6 +99,9 @@ Prometheus ──► Scrape metrics ──► Grafana Dashboards + Alerts
 
 ```
 laptop-store/
+├── .github/
+│   └── workflows/
+│       └── ci-cd.yml           # 8-job enterprise GitHub Actions pipeline
 ├── backend/                    # Node.js REST API
 │   ├── controllers/            # Business logic
 │   │   ├── authController.js
@@ -137,6 +142,10 @@ laptop-store/
 │   ├── Dockerfile
 │   └── nginx.conf
 │
+├── k8s/                        # Production-grade Kubernetes Orchestration
+│   ├── base/                   # Universal blueprints (Deployments, Services, ConfigMaps)
+│   └── overlays/               # Environment variations (Staging, Production)
+│
 ├── monitoring/
 │   ├── prometheus/
 │   │   ├── prometheus.yml      # Scrape configs
@@ -152,7 +161,7 @@ laptop-store/
 │   └── main.tf                 # Complete AWS infrastructure
 │
 ├── docker-compose.yml          # Full stack local environment
-└── .gitlab-ci.yml              # 7-stage CI/CD pipeline
+└── README.md                   # Project documentation
 ```
 
 ---
@@ -200,8 +209,8 @@ specifications: {
 ### 1. Clone & Install
 
 ```bash
-git clone https://gitlab.com/your-org/laptop-store.git
-cd laptop-store
+git clone https://github.com/ShelarAtharva404/laptopzone.git
+cd laptopzone
 
 # Backend
 cd backend
@@ -292,39 +301,86 @@ docker-compose down
 
 ---
 
-## 🔄 GitLab CI/CD Pipeline <a name="cicd"></a>
+## 🔄 GitHub Actions CI/CD Pipeline <a name="cicd"></a>
 
-The `.gitlab-ci.yml` defines a **7-stage pipeline**:
+The `.github/workflows/ci-cd.yml` defines a production-grade **8-job continuous integration and deployment pipeline**:
 
 ```
-validate → test → build → security → deploy-staging → integration-test → deploy-production
+[Validate (Backend/Frontend)] ──► [Test (Backend/Frontend)] ──► [Build & Push (GHCR)]
+                                                                          │
+ ┌────────────────────────────────────────────────────────────────────────┘
+ │
+ ├──► [Security (Trivy Scan / NPM Audit)]
+ │
+ ├──► [Deploy Staging (SSH)] ──► [Integration Tests (Curl Staging)]
+ │
+ └──► [Deploy Production (SSH - Blue/Green)] ──► [Deploy AWS ECS] ──► [Notify (Slack)]
 ```
+
+### CI/CD Workflow Stages
 
 | Stage | Jobs | Description |
 |-------|------|-------------|
-| **validate** | lint-backend, lint-frontend | Dependency validation |
-| **test** | test-backend, test-frontend | Unit tests + build verification |
-| **build** | build-backend-image, build-frontend-image | Docker builds + push to GitLab Registry |
-| **security** | security-scan-backend, dependency-audit | Trivy container scan + npm audit |
-| **deploy-staging** | deploy-staging | Auto deploy to staging environment |
-| **integration-test** | integration-test-staging | API health + smoke tests |
-| **deploy-production** | deploy-production *(manual)* | Manual approval required for prod |
+| **Validate** | `validate-backend`, `validate-frontend` | Installs dependencies with strict lockfile checks (`npm ci`) to guarantee clean base builds. |
+| **Test** | `test-backend`, `test-frontend` | Spins up a MongoDB 7.0 container in-pipeline to run backend health validation, and compiles the React application to verify zero compilation breaks. |
+| **Build & Push** | `build` | Builds multi-platform optimized Docker images, caches layers using GitHub Actions cache (`type=gha`), downcases repository naming variables, and pushes tagged images to GitHub Container Registry (GHCR). |
+| **Security** | `security-scan-backend`, `dependency-audit` | Performs static security container analysis via Aqua Security `Trivy` (failing the build on CRITICAL vulnerabilities) and audits npm packages. |
+| **Deploy Staging** | `deploy-staging` | Automatically triggers on pushes to the `develop` branch. Authenticates with GHCR on the staging host, pulls the target tags, and does rolling zero-downtime container swaps. |
+| **Integration Test**| `integration-test-staging` | Validates endpoint availability and performs API smoke tests against the active staging environment. |
+| **Deploy Production**| `deploy-production` | Triggered on pushes to the `main` branch or release tags. Executes an automated Blue-Green container swap (backing up previous compose settings, scaling up new instances, verifying local health, and safely pruning old images). |
+| **Deploy AWS ECS** | `deploy-aws-ecs` | Deploys release versions to AWS ECS Fargate clusters automatically upon git tag creation. |
+| **Notify** | `notify` | Dispatches dynamic Slack cards detailing build results, short commit SHA, author handles, and execution summaries. |
 
-### Required GitLab CI Variables
-Set in **Settings → CI/CD → Variables**:
+### Required Repository Secrets
+To execute this pipeline successfully, navigate to **Settings → Secrets and Variables → Actions** in your GitHub repository and declare:
 
-| Variable | Description |
+| Secret | Description |
 |---------|-------------|
-| `STAGING_SSH_PRIVATE_KEY` | SSH key for staging server |
-| `STAGING_HOST` | Staging server IP/hostname |
-| `STAGING_USER` | SSH username |
-| `PROD_SSH_PRIVATE_KEY` | SSH key for production |
-| `PROD_HOST` | Production server IP |
-| `PROD_USER` | SSH username |
-| `AWS_ACCESS_KEY_ID` | AWS access key |
-| `AWS_SECRET_ACCESS_KEY` | AWS secret key |
-| `SLACK_WEBHOOK_URL` | Slack webhook for notifications |
-| `VITE_API_URL` | Frontend API base URL |
+| `STAGING_HOST` | IP/domain name of your staging server |
+| `STAGING_USER` | SSH administrative username for staging (e.g. `ubuntu`) |
+| `STAGING_SSH_PRIVATE_KEY` | Private SSH key authorized for remote access on staging |
+| `PROD_HOST` | IP/domain name of your production server |
+| `PROD_USER` | SSH administrative username for production |
+| `PROD_SSH_PRIVATE_KEY` | Private SSH key authorized for remote access on production |
+| `AWS_ACCESS_KEY_ID` | AWS service account key for ECS orchestrations |
+| `AWS_SECRET_ACCESS_KEY` | AWS service account secret key |
+| `SLACK_WEBHOOK_URL` | Incoming Slack webhook endpoint for notification logs |
+| `VITE_API_URL` | API Gateway base URL injected into the React static files at build time |
+
+---
+
+## ☸️ Kubernetes (Kustomize) Orchestration <a name="kubernetes"></a>
+
+We manage environment configurations declaratively using **Kustomize** within the `/k8s` directory. This ensures a clean separation between the base templates and environment overlays without manifest duplication.
+
+### Architecture Structure
+
+- **`k8s/base`**: Standard blueprints mapping base resources:
+  - `backend-deployment.yaml`: Rolling update strategy, liveness/readiness health probes, resource requests/limits, and secure non-root user security context.
+  - `backend-service.yaml`: ClusterIP service exposing the API on port `5000`.
+  - `frontend-deployment.yaml` & `frontend-service.yaml`: Serving the React client application on port `80`.
+  - `configmap.yaml` & `kustomization.yaml`: Baseline config configurations.
+- **`k8s/overlays/staging`**:
+  - Sets staging-specific properties.
+  - Overrides replicas to `1` (conserves resources on smaller environments).
+  - Appends `-staging` name suffix to all resources.
+- **`k8s/overlays/production`**:
+  - Overrides baseline configuration to `2` minimum replicas for high availability.
+  - Appends `-prod` name suffix to resources.
+  - Attaches **HorizontalPodAutoscalers** (`hpa.yaml`) scaling backend containers between `2` and `10` pods dynamically based on CPU/Memory usage.
+  - Configures ingress routing rules (`ingress.yaml`) mapped with `cert-manager` for automatic Let's Encrypt SSL terminations.
+
+### Manifest Verification
+
+You can dry-run and compile the unified environment manifests locally to confirm they compile with no errors:
+
+```bash
+# Validate Staging Manifest
+kubectl kustomize k8s/overlays/staging
+
+# Validate Production Manifest
+kubectl kustomize k8s/overlays/production
+```
 
 ---
 
@@ -350,8 +406,8 @@ terraform init
 
 # Plan
 terraform plan \
-  -var="backend_image=registry.gitlab.com/org/app/backend:latest" \
-  -var="frontend_image=registry.gitlab.com/org/app/frontend:latest" \
+  -var="backend_image=ghcr.io/shelaratharva404/laptopzone/backend:latest" \
+  -var="frontend_image=ghcr.io/shelaratharva404/laptopzone/frontend:latest" \
   -var="mongodb_uri=$MONGODB_URI" \
   -var="jwt_secret=$JWT_SECRET"
 
