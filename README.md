@@ -346,6 +346,7 @@ To execute this pipeline successfully, navigate to **Settings → Secrets and Va
 | `AWS_SECRET_ACCESS_KEY` | AWS service account secret key |
 | `SLACK_WEBHOOK_URL` | Incoming Slack webhook endpoint for notification logs |
 | `VITE_API_URL` | API Gateway base URL injected into the React static files at build time |
+| `KUBERNETES_KUBE_CONFIG` | Complete YAML content of your cluster's `.kube/config` (or service account credentials) |
 
 ---
 
