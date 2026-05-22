@@ -61,7 +61,10 @@ services:
       - frontend
       - backend
     networks:
-      - laptopzone-network
+      laptopzone-network:
+        aliases:
+          - laptopzone.com
+          - staging.laptopzone.com
 
   # ─── Prometheus ──────────────────────────────────────────────
   prometheus:
@@ -155,6 +158,33 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - laptopzone-network
+
+  # ─── Nginx Exporter (Metrics Collection) ─────────────────────
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:1.0.0
+    container_name: laptopzone-nginx-exporter
+    restart: unless-stopped
+    command:
+      - -nginx.scrape-uri=http://frontend:80/nginx_status
+    ports:
+      - "9113:9113"
+    depends_on:
+      - frontend
+    networks:
+      - laptopzone-network
+
+  # ─── Blackbox Exporter (Endpoint Probing) ────────────────────
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.24.0
+    container_name: laptopzone-blackbox-exporter
+    restart: unless-stopped
+    ports:
+      - "9115:9115"
+    volumes:
+      - ./monitoring/blackbox/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    networks:
+      - laptopzone-network
+
 
 volumes:
   prometheus_data:
