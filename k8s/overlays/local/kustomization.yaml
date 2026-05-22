@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - mongodb.yaml
+  - backend-helper-service.yaml
+
+patches:
+  - path: patches.yaml
+
+secretGenerator:
+  - name: laptopzone-secrets
+    literals:
+      - MONGODB_URI=mongodb://mongodb:27017/laptopstore
+      - JWT_SECRET=laptopzone_local_dev_jwt_secret_key_2026
