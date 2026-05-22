@@ -1,0 +1,167 @@
+# ═══════════════════════════════════════════════════════════════
+# LaptopZone - Terraform Infrastructure CI/CD Pipeline
+# Stages: Lint & Validate & Plan → Apply (Merges to main) → Notify
+# ═══════════════════════════════════════════════════════════════
+
+name: LaptopZone Terraform IaC
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: ap-south-1
+  TERRAFORM_VERSION: 1.6.6
+  # Default Terraform Variables for validation & plan fallback
+  TF_VAR_aws_region: "ap-south-1"
+  TF_VAR_environment: "production"
+  TF_VAR_backend_image: "ghcr.io/shelaratharva404/laptopzone/backend:latest"
+  TF_VAR_frontend_image: "ghcr.io/shelaratharva404/laptopzone/frontend:latest"
+  # Pull secure variables from GitHub Secrets
+  TF_VAR_mongodb_uri: ${{ secrets.MONGODB_URI || 'mongodb+srv://dummy:dummy@cluster.mongodb.net/laptopzone' }}
+  TF_VAR_jwt_secret: ${{ secrets.JWT_SECRET || 'dummy_jwt_secret_key_minimum_32_characters' }}
+
+jobs:
+  # ─── Lint & Plan (CI Stage) ──────────────────────────────────────
+  terraform-ci:
+    name: Terraform Lint, Validate & Plan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Format Check
+        run: |
+          cd terraform
+          terraform fmt -check
+        continue-on-error: false
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init
+
+      - name: Terraform Validate
+        run: |
+          cd terraform
+          terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          cd terraform
+          terraform plan -no-color -out=tfplan
+        continue-on-error: false
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: terraform/tfplan
+          retention-days: 2
+
+  # ─── Apply Plan (CD Stage) ───────────────────────────────────────
+  terraform-cd:
+    name: Terraform Apply Changes
+    runs-on: ubuntu-latest
+    needs: [terraform-ci]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: production
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download Plan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: terraform/
+
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init
+
+      - name: Terraform Apply
+        run: |
+          cd terraform
+          terraform apply -auto-approve tfplan
+
+  # ─── Notify Stage ────────────────────────────────────────────────
+  notify:
+    name: Slack Reporting
+    runs-on: ubuntu-latest
+    needs: [terraform-ci, terraform-cd]
+    if: always() && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Get Short SHA & Commit Message
+        id: info
+        run: |
+          echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_msg=$(git log -1 --pretty=%B | head -n 1)" >> $GITHUB_OUTPUT
+
+      - name: Dispatch Success Notification
+        if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+        run: |
+          curl -X POST ${{ secrets.SLACK_WEBHOOK_URL }} \
+            -H 'Content-type: application/json' \
+            --data "{
+              \"text\": \"✅ *LaptopZone Terraform IaC Applied!* \`${{ github.ref_name }}\` by ${{ github.actor }}\",
+              \"attachments\": [{
+                \"color\": \"good\",
+                \"fields\": [
+                  {\"title\": \"Commit\", \"value\": \"${{ steps.info.outputs.sha_short }}\", \"short\": true},
+                  {\"title\": \"Message\", \"value\": \"${{ steps.info.outputs.commit_msg }}\", \"short\": false},
+                  {\"title\": \"Workflow Run\", \"value\": \"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\", \"short\": false}
+                ]
+              }]
+            }" || true
+
+      - name: Dispatch Failure Notification
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: |
+          curl -X POST ${{ secrets.SLACK_WEBHOOK_URL }} \
+            -H 'Content-type: application/json' \
+            --data "{\"text\": \"❌ *LaptopZone Terraform IaC FAILED!* \`${{ github.ref_name }}\` — Check: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" || true

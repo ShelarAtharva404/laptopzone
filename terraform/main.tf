@@ -34,15 +34,47 @@ provider "aws" {
 }
 
 # ─── Variables ───────────────────────────────────────────────────
-variable "aws_region"   { default = "ap-south-1" }
-variable "environment"  { default = "production" }
-variable "app_name"     { default = "laptopzone" }
-variable "domain_name"  { default = "laptopzone.com" }
+variable "aws_region" {
+  type    = string
+  default = "ap-south-1"
+}
 
-variable "backend_image"  { description = "Backend Docker image URI" }
-variable "frontend_image" { description = "Frontend Docker image URI" }
-variable "mongodb_uri"    { description = "MongoDB Atlas connection string", sensitive = true }
-variable "jwt_secret"     { description = "JWT secret key", sensitive = true }
+variable "environment" {
+  type    = string
+  default = "production"
+}
+
+variable "app_name" {
+  type    = string
+  default = "laptopzone"
+}
+
+variable "domain_name" {
+  type    = string
+  default = "laptopzone.com"
+}
+
+variable "backend_image" {
+  type        = string
+  description = "Backend Docker image URI"
+}
+
+variable "frontend_image" {
+  type        = string
+  description = "Frontend Docker image URI"
+}
+
+variable "mongodb_uri" {
+  type        = string
+  description = "MongoDB Atlas connection string"
+  sensitive   = true
+}
+
+variable "jwt_secret" {
+  type        = string
+  description = "JWT secret key"
+  sensitive   = true
+}
 
 # ─── Data Sources ────────────────────────────────────────────────
 data "aws_availability_zones" "available" { state = "available" }
@@ -53,7 +85,7 @@ resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
   enable_dns_support   = true
-  tags = { Name = "${var.app_name}-vpc" }
+  tags                 = { Name = "${var.app_name}-vpc" }
 }
 
 resource "aws_internet_gateway" "main" {
@@ -68,7 +100,7 @@ resource "aws_subnet" "public" {
   cidr_block              = "10.0.${count.index + 1}.0/24"
   availability_zone       = data.aws_availability_zones.available.names[count.index]
   map_public_ip_on_launch = true
-  tags = { Name = "${var.app_name}-public-${count.index + 1}", Type = "public" }
+  tags                    = { Name = "${var.app_name}-public-${count.index + 1}", Type = "public" }
 }
 
 # Private Subnets (ECS Tasks)
@@ -77,7 +109,7 @@ resource "aws_subnet" "private" {
   vpc_id            = aws_vpc.main.id
   cidr_block        = "10.0.${count.index + 10}.0/24"
   availability_zone = data.aws_availability_zones.available.names[count.index]
-  tags = { Name = "${var.app_name}-private-${count.index + 1}", Type = "private" }
+  tags              = { Name = "${var.app_name}-private-${count.index + 1}", Type = "private" }
 }
 
 # NAT Gateway for private subnet internet access
@@ -222,7 +254,7 @@ resource "aws_lb_target_group" "backend" {
   }
 
   deregistration_delay = 30
-  tags = { Name = "${var.app_name}-backend-tg" }
+  tags                 = { Name = "${var.app_name}-backend-tg" }
 }
 
 resource "aws_lb_target_group" "frontend" {
@@ -341,12 +373,12 @@ resource "aws_ecs_task_definition" "backend" {
 
     environment = [
       { name = "NODE_ENV", value = "production" },
-      { name = "PORT",     value = "5000" }
+      { name = "PORT", value = "5000" }
     ]
 
     secrets = [
       { name = "MONGODB_URI", valueFrom = aws_ssm_parameter.mongodb_uri.arn },
-      { name = "JWT_SECRET",  valueFrom = aws_ssm_parameter.jwt_secret.arn }
+      { name = "JWT_SECRET", valueFrom = aws_ssm_parameter.jwt_secret.arn }
     ]
 
     logConfiguration = {
@@ -379,9 +411,9 @@ resource "aws_ecs_task_definition" "frontend" {
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
 
   container_definitions = jsonencode([{
-    name      = "frontend"
-    image     = var.frontend_image
-    essential = true
+    name         = "frontend"
+    image        = var.frontend_image
+    essential    = true
     portMappings = [{ containerPort = 80, protocol = "tcp" }]
     logConfiguration = {
       logDriver = "awslogs"
@@ -440,10 +472,10 @@ resource "aws_ecs_service" "backend" {
 }
 
 resource "aws_ecs_service" "frontend" {
-  name          = "${var.app_name}-frontend"
-  cluster       = aws_ecs_cluster.main.id
+  name            = "${var.app_name}-frontend"
+  cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.frontend.arn
-  desired_count = 2
+  desired_count   = 2
 
   capacity_provider_strategy {
     capacity_provider = "FARGATE_SPOT"
@@ -463,8 +495,14 @@ resource "aws_ecs_service" "frontend" {
     container_port   = 80
   }
 
-  deployment_circuit_breaker { enable = true; rollback = true }
-  lifecycle { ignore_changes = [task_definition, desired_count] }
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  lifecycle {
+    ignore_changes = [task_definition, desired_count]
+  }
 
   tags = { Name = "${var.app_name}-frontend-service" }
 }
@@ -627,7 +665,7 @@ resource "aws_cloudfront_distribution" "main" {
 
 # ─── ACM Certificate ─────────────────────────────────────────────
 resource "aws_acm_certificate" "main" {
-  provider                  = aws.us-east-1  # CloudFront requires us-east-1
+  provider                  = aws.us-east-1 # CloudFront requires us-east-1
   domain_name               = var.domain_name
   subject_alternative_names = ["*.${var.domain_name}"]
   validation_method         = "DNS"
@@ -723,9 +761,9 @@ resource "aws_route53_record" "www" {
 }
 
 # ─── Outputs ─────────────────────────────────────────────────────
-output "alb_dns_name"        { value = aws_lb.main.dns_name }
-output "cloudfront_domain"   { value = aws_cloudfront_distribution.main.domain_name }
-output "ecs_cluster_name"    { value = aws_ecs_cluster.main.name }
-output "vpc_id"              { value = aws_vpc.main.id }
+output "alb_dns_name" { value = aws_lb.main.dns_name }
+output "cloudfront_domain" { value = aws_cloudfront_distribution.main.domain_name }
+output "ecs_cluster_name" { value = aws_ecs_cluster.main.name }
+output "vpc_id" { value = aws_vpc.main.id }
 output "route53_nameservers" { value = aws_route53_zone.main.name_servers }
 output "product_images_bucket" { value = aws_s3_bucket.product_images.bucket }
